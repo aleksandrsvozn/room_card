@@ -109,3 +109,11 @@ window.customCards.push({
   name: "EC Room Card",
   description: "Themed room card with 0..4 right-side widgets."
 });
+
+EcRoomCard.getConfigElement = () => document.createElement("ec-room-card-editor");
+EcRoomCard.getStubConfig = () => ({ type: "custom:ec-room-card", name: "Room", room_theme: "living_room" });
+
+// lazy-load editor
+(async () => {
+  await import("./ec-room-card-editor.js");
+})();
