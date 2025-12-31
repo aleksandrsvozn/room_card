@@ -1,7 +1,5 @@
 {
   "name": "Room Card",
   "content_in_root": true,
-  "render_readme": true,
-  "zip_release": false,
-  "homeassistant": "2023.6.0"
+  "render_readme": true
 }
