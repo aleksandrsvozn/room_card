@@ -363,3 +363,80 @@ class RoomCard extends HTMLElement {
     `;
 
     // Main card action (tap anywhere in left area)
+    const mainEl = this.shadowRoot.getElementById("main");
+    mainEl.onclick = () =>
+      handleAction(this, hass, cfg.entity, cfg.tap_action || DEFAULT_ACTION);
+
+    // Optional: if you want icon to have a DIFFERENT action than card,
+    // set cfg.icon_tap_action. Otherwise it uses the same as the card.
+    const iconEl = this.shadowRoot.getElementById("room-icon");
+    iconEl.onclick = (e) => {
+      e.stopPropagation();
+      handleAction(
+        this,
+        hass,
+        cfg.entity,
+        cfg.icon_tap_action || cfg.tap_action || DEFAULT_ACTION
+      );
+    };
+
+    // Sub actions
+    subs.forEach((s, idx) => {
+      const el = this.shadowRoot.getElementById(`sub-${idx}`);
+      if (!el) return;
+
+      el.onclick = (e) => {
+        e.stopPropagation();
+        handleAction(this, hass, s.entity, s.tap);
+      };
+
+      // Hold (optional)
+      let holdTimer = null;
+      if (!isActionEmpty(s.hold)) {
+        el.onpointerdown = (e) => {
+          e.stopPropagation();
+          holdTimer = window.setTimeout(() => {
+            handleAction(this, hass, s.entity, s.hold);
+            holdTimer = null;
+          }, 500);
+        };
+        el.onpointerup = (e) => {
+          e.stopPropagation();
+          if (holdTimer) window.clearTimeout(holdTimer);
+          holdTimer = null;
+        };
+        el.onpointerleave = () => {
+          if (holdTimer) window.clearTimeout(holdTimer);
+          holdTimer = null;
+        };
+      }
+
+      // Double tap (optional)
+      if (!isActionEmpty(s.dbl)) {
+        el.ondblclick = (e) => {
+          e.stopPropagation();
+          handleAction(this, hass, s.entity, s.dbl);
+        };
+      }
+    });
+  }
+
+  _escape(str) {
+    return String(str ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+}
+
+customElements.define("room-card", RoomCard);
+
+// Make it discoverable in the Lovelace card picker
+window.customCards = window.customCards || [];
+window.customCards.push({
+  type: "room-card",
+  name: "Room Card",
+  description: "A room tile with up to 4 sub-icons (large icon bottom-left).",
+});
