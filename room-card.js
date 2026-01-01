@@ -210,7 +210,8 @@ class RoomCard extends HTMLElement {
 
   // Визуальный редактор
   static async getConfigElement() {
-    await import("./room-card-editor.js");
+    // cache-busting, чтобы после обновлений HACS не тянуть старый editor из кеша
+    await import(`./room-card-editor.js?v=1.0.0`);
     return document.createElement("room-card-editor");
   }
 
