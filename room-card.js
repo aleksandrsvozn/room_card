@@ -1,552 +1,397 @@
-/* room-card.js */
-/* Room Card (single-file) — room style like button-card "card_room" */
+/* room-card.js
+ * A lightweight Lovelace custom card inspired by UI Lovelace Minimalist "card_room".
+ * No build tools required.
+ */
 
-const CARD_TYPE = "room-card";
-const CARD_TAG = "room-card";
-const EDITOR_TAG = "room-card-editor";
+const fireEvent = (node, type, detail = {}, options = {}) => {
+  const event = new Event(type, {
+    bubbles: options.bubbles ?? true,
+    cancelable: options.cancelable ?? false,
+    composed: options.composed ?? true,
+  });
+  event.detail = detail;
+  node.dispatchEvent(event);
+  return event;
+};
 
-/* ===================== */
-/* ===== Helpers ======= */
-/* ===================== */
+const DEFAULT_ACTION = { action: "toggle" };
 
-function esc(v) {
-  return String(v ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
+function isActionEmpty(a) {
+  return !a || a.action === "none";
 }
 
-function normalizeEntities(config) {
-  if (Array.isArray(config.entities) && config.entities.length) return config.entities;
-  if (typeof config.entity === "string" && config.entity.trim()) return [config.entity.trim()];
-  return [];
+function getEntityState(hass, entityId) {
+  return entityId ? hass.states[entityId] : undefined;
 }
 
-function prettyName(stateObj, entityId) {
-  return stateObj?.attributes?.friendly_name || entityId;
+function friendlyName(stateObj, fallback) {
+  return stateObj?.attributes?.friendly_name || fallback || "";
 }
 
-function isUnavailable(st) {
-  const s = String(st?.state ?? "").toLowerCase();
-  return s === "unavailable" || s === "unknown";
+function entityIcon(stateObj, fallbackIcon) {
+  return stateObj?.attributes?.icon || fallbackIcon || "mdi:home";
 }
 
-function isOn(st) {
-  const s = String(st?.state ?? "").toLowerCase();
-  return ["on", "true", "open", "opened", "home", "detected", "playing"].includes(s);
+function clampSubEntities(arr, max = 4) {
+  if (!Array.isArray(arr)) return [];
+  return arr.slice(0, max);
 }
 
-function pickIcon(st, fallback) {
-  return st?.attributes?.icon || fallback || "mdi:home";
-}
+// Try to match the label logic from the YAML template:
+// - if label_use_temperature: use current_temperature OR temperature OR device_temperature OR entity state + unit
+// - else if label_use_brightness and entity on and brightness exists: show brightness %
+// - else show translated state (here: state string)
+function computeLabel({ hass, stateObj, labelUseTemp, labelUseBri }) {
+  if (!stateObj) return "-";
+  const attrs = stateObj.attributes || {};
 
-// Tries to mimic your button-card variables/state style
-function widgetBgForState(st, w, defaults) {
-  const base = w?.bg ?? defaults.widget_bg ?? "rgba(0,0,0,0.08)";
-  if (!st) return base;
-
-  if (isUnavailable(st)) return w?.bg_unavailable ?? w?.bg_off ?? base;
-  if (isOn(st)) return w?.bg_on ?? base;
-  return w?.bg_off ?? base;
-}
-
-function widgetIconForState(st, w) {
-  const icon = w?.icon || "mdi:help-circle-outline";
-  if (!st) return icon;
-
-  if (isUnavailable(st))
-    return w?.icon_unavailable || w?.icon_off || w?.icon_on || icon;
-
-  if (isOn(st)) return w?.icon_on || icon;
-  return w?.icon_off || w?.icon_on || icon;
-}
-
-function roomIconForState(st, cfg) {
-  const icon = cfg?.icon || "mdi:home-variant";
-  if (!st) return icon;
-
-  if (isUnavailable(st)) return cfg?.icon_unavailable || icon;
-  if (isOn(st)) return cfg?.icon_on || icon;
-  return cfg?.icon_off || icon;
-}
-
-/* ===================== */
-/* ====== EDITOR ======= */
-/* ===================== */
-
-class RoomCardEditor extends HTMLElement {
-  constructor() {
-    super();
-    this.attachShadow({ mode: "open" });
-    this._hass = null;
-    this._config = null;
+  if (labelUseTemp) {
+    const v =
+      attrs.current_temperature ??
+      attrs.temperature ??
+      attrs.device_temperature ??
+      stateObj.state ??
+      "-";
+    const uom = attrs.unit_of_measurement || "°C";
+    // If v already includes units, don't double it — keep simple:
+    return `${v}${typeof v === "number" ? uom : uom}`;
   }
 
-  set hass(hass) {
-    this._hass = hass;
+  if (
+    labelUseBri &&
+    stateObj.state === "on" &&
+    attrs.brightness !== undefined &&
+    attrs.brightness !== null
+  ) {
+    const bri = Math.round(Number(attrs.brightness) / 2.55);
+    return `${Number.isFinite(bri) ? bri : 0}%`;
   }
 
-  setConfig(config) {
-    // Backward compatible:
-    // - Old: entities: [..]
-    // - New: room_entity + widgets
-    const entities = normalizeEntities(config);
-    const room_entity = config.room_entity || entities[0] || "";
-    const widgets = Array.isArray(config.widgets)
-      ? config.widgets
-      : (entities.slice(1, 5).map((e) => ({ entity: e })) || []);
-
-    this._config = {
-      type: "custom:room-card",
-      title: config.title ?? "Room",
-      room_entity,
-      widgets,
-      accent: config.accent ?? null,
-      bg: config.bg ?? null,
-      icon_bg: config.icon_bg ?? null,
-      widget_bg: config.widget_bg ?? null,
-      ripple_opacity: config.ripple_opacity ?? 0.3,
-
-      // optional room icons by state
-      icon: config.icon ?? null,
-      icon_on: config.icon_on ?? null,
-      icon_off: config.icon_off ?? null,
-      icon_unavailable: config.icon_unavailable ?? null,
-    };
-    this._render();
-  }
-
-  _emit() {
-    const out = {
-      type: "custom:room-card",
-      title: this._config.title,
-      room_entity: this._config.room_entity,
-      widgets: this._config.widgets,
-      accent: this._config.accent,
-      bg: this._config.bg,
-      icon_bg: this._config.icon_bg,
-      widget_bg: this._config.widget_bg,
-      ripple_opacity: this._config.ripple_opacity,
-      icon: this._config.icon,
-      icon_on: this._config.icon_on,
-      icon_off: this._config.icon_off,
-      icon_unavailable: this._config.icon_unavailable,
-    };
-
-    // remove nulls for clean YAML
-    Object.keys(out).forEach((k) => (out[k] == null || out[k] === "" ? delete out[k] : 0));
-
-    this.dispatchEvent(
-      new CustomEvent("config-changed", {
-        bubbles: true,
-        composed: true,
-        detail: { config: out },
-      })
-    );
-  }
-
-  _render() {
-    if (!this._config || !this.shadowRoot) return;
-    const c = this._config;
-
-    this.shadowRoot.innerHTML = `
-      <div class="wrap">
-        <label>Title
-          <input value="${esc(c.title)}" id="title">
-        </label>
-
-        <label>Room entity (optional)
-          <input value="${esc(c.room_entity)}" id="room_entity" placeholder="light.kitchen or sensor...">
-        </label>
-
-        <label>Widgets (one entity per line, max 4)
-          <textarea id="widgets" rows="6">${esc((c.widgets || []).map(w => w.entity).filter(Boolean).join("\n"))}</textarea>
-        </label>
-
-        <div class="grid">
-          <label>bg
-            <input value="${esc(c.bg ?? "")}" id="bg" placeholder="#FFE7C6 or rgba(...)">
-          </label>
-          <label>accent
-            <input value="${esc(c.accent ?? "")}" id="accent" placeholder="#7E4400">
-          </label>
-          <label>icon_bg
-            <input value="${esc(c.icon_bg ?? "")}" id="icon_bg" placeholder="#EEC690">
-          </label>
-          <label>widget_bg
-            <input value="${esc(c.widget_bg ?? "")}" id="widget_bg" placeholder="rgba(0,0,0,0.08)">
-          </label>
-        </div>
-
-        <label>Ripple opacity
-          <input type="number" min="0" max="1" step="0.05" value="${esc(c.ripple_opacity ?? 0.3)}" id="ripple_opacity">
-        </label>
-      </div>
-
-      <style>
-        .wrap { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
-        textarea, input { width: 100%; box-sizing: border-box; }
-        textarea { resize: vertical; }
-        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-      </style>
-    `;
-
-    const titleEl = this.shadowRoot.querySelector("#title");
-    const roomEntityEl = this.shadowRoot.querySelector("#room_entity");
-    const widgetsEl = this.shadowRoot.querySelector("#widgets");
-    const bgEl = this.shadowRoot.querySelector("#bg");
-    const accentEl = this.shadowRoot.querySelector("#accent");
-    const iconBgEl = this.shadowRoot.querySelector("#icon_bg");
-    const widgetBgEl = this.shadowRoot.querySelector("#widget_bg");
-    const rippleEl = this.shadowRoot.querySelector("#ripple_opacity");
-
-    const apply = () => {
-      this._config.title = titleEl.value;
-      this._config.room_entity = roomEntityEl.value.trim();
-
-      const widgetEntities = widgetsEl.value
-        .split("\n")
-        .map((e) => e.trim())
-        .filter(Boolean)
-        .slice(0, 4);
-
-      // keep extra widget properties if they existed; otherwise make simple widgets
-      const old = Array.isArray(this._config.widgets) ? this._config.widgets : [];
-      this._config.widgets = widgetEntities.map((ent, i) => {
-        const prev = old[i] || {};
-        return { ...prev, entity: ent };
-      });
-
-      const norm = (v) => (String(v || "").trim() ? String(v).trim() : null);
-      this._config.bg = norm(bgEl.value);
-      this._config.accent = norm(accentEl.value);
-      this._config.icon_bg = norm(iconBgEl.value);
-      this._config.widget_bg = norm(widgetBgEl.value);
-
-      const ro = parseFloat(rippleEl.value);
-      this._config.ripple_opacity = Number.isFinite(ro) ? ro : 0.3;
-
-      this._emit();
-    };
-
-    titleEl.addEventListener("input", apply);
-    roomEntityEl.addEventListener("input", apply);
-    widgetsEl.addEventListener("input", apply);
-    bgEl.addEventListener("input", apply);
-    accentEl.addEventListener("input", apply);
-    iconBgEl.addEventListener("input", apply);
-    widgetBgEl.addEventListener("input", apply);
-    rippleEl.addEventListener("input", apply);
-  }
+  return stateObj.state ?? "-";
 }
 
-if (!customElements.get(EDITOR_TAG)) {
-  customElements.define(EDITOR_TAG, RoomCardEditor);
-}
+async function handleAction(el, hass, entityId, actionConfig) {
+  const a = actionConfig || DEFAULT_ACTION;
+  const action = a.action || "toggle";
+  if (action === "none") return;
 
-/* ===================== */
-/* ====== CARD ========= */
-/* ===================== */
+  if (action === "more-info") {
+    fireEvent(el, "hass-more-info", { entityId });
+    return;
+  }
+
+  if (action === "navigate") {
+    const path = a.navigation_path || a.navigationPath;
+    if (path) history.pushState(null, "", path);
+    fireEvent(window, "location-changed", { replace: false });
+    return;
+  }
+
+  if (action === "url") {
+    const url = a.url_path || a.urlPath;
+    if (url) window.open(url, "_blank", "noopener,noreferrer");
+    return;
+  }
+
+  if (action === "toggle") {
+    if (!entityId) return;
+    const st = hass.states[entityId];
+    if (!st) return;
+
+    const domain = entityId.split(".")[0];
+    // Common toggle services:
+    // - light/switch/input_boolean: toggle
+    // - cover: toggle (exists for some), otherwise stop/open/close (we won't guess)
+    // - script: turn_on
+    let service = "toggle";
+    if (domain === "script" || domain === "scene") service = "turn_on";
+
+    await hass.callService(domain, service, { entity_id: entityId });
+    return;
+  }
+
+  if (action === "call-service") {
+    const s = a.service;
+    if (!s || typeof s !== "string" || !s.includes(".")) return;
+    const [domain, service] = s.split(".");
+    const data = { ...(a.service_data || a.data || {}) };
+
+    // Convenience: if user didn't specify target entity, use entityId
+    if (entityId && data.entity_id === undefined) data.entity_id = entityId;
+
+    await hass.callService(domain, service, data);
+    return;
+  }
+
+  // Home Assistant has newer "perform-action" style in some contexts,
+  // but Lovelace custom cards typically use call-service / toggle / navigate.
+}
 
 class RoomCard extends HTMLElement {
-  constructor() {
-    super();
-    this.attachShadow({ mode: "open" });
-    this._hass = null;
-    this._config = null;
-  }
-
-  setConfig(config) {
-    if (!config) throw new Error("Empty config");
-
-    // Backward compatible input:
-    // Old config.entities: [room, w1, w2, w3, w4]
-    const entities = normalizeEntities(config);
-    const room_entity = config.room_entity || entities[0] || null;
-
-    const widgets = Array.isArray(config.widgets)
-      ? config.widgets.slice(0, 4)
-      : entities.slice(1, 5).map((e) => ({ entity: e }));
-
-    this._config = {
+  static getStubConfig() {
+    return {
       type: "custom:room-card",
-      title: config.title ?? "Room",
-      room_entity,
-      widgets,
-
-      // styling like your YAML vars
-      bg: config.bg ?? "var(--ha-card-background, var(--card-background-color, #fff))",
-      accent: config.accent ?? "var(--primary-text-color)",
-      icon_bg: config.icon_bg ?? "rgba(0,0,0,0.08)",
-      widget_bg: config.widget_bg ?? "rgba(0,0,0,0.08)",
-      ripple_opacity: config.ripple_opacity ?? 0.3,
-
-      // optional room icons by state
-      icon: config.icon ?? null,
-      icon_on: config.icon_on ?? null,
-      icon_off: config.icon_off ?? null,
-      icon_unavailable: config.icon_unavailable ?? null,
+      entity: "light.living_room",
+      name: "Living Room",
+      icon: "mdi:sofa-single",
+      label_use_temperature: true,
+      label_use_brightness: false,
+      sub_entities: [
+        { entity: "light.living_room", icon: "mdi:lightbulb", tap_action: { action: "toggle" }, color_on: "var(--warning-color)" },
+        { entity: "binary_sensor.motion", icon: "mdi:motion-sensor", tap_action: { action: "more-info" }, color_on: "var(--info-color)" },
+      ],
     };
-
-    this._render();
   }
 
   set hass(hass) {
     this._hass = hass;
+    this._render();
+  }
+
+  setConfig(config) {
+    if (!config) throw new Error("Invalid configuration");
+    if (!config.entity) throw new Error("You need to define an entity");
+    this._config = {
+      label_use_temperature: true,
+      label_use_brightness: false,
+      ...config,
+    };
+    if (!this._root) {
+      this.attachShadow({ mode: "open" });
+      this._root = document.createElement("div");
+      this.shadowRoot.appendChild(this._root);
+      this._injectStyles();
+    }
     this._render();
   }
 
   getCardSize() {
-    return 1;
+    return 3;
   }
 
-  _fireMoreInfo(entityId) {
-    if (!entityId) return;
-    this.dispatchEvent(
-      new CustomEvent("hass-more-info", {
-        bubbles: true,
-        composed: true,
-        detail: { entityId },
-      })
-    );
+  _injectStyles() {
+    const style = document.createElement("style");
+    style.textContent = `
+      :host { display:block; }
+      .card {
+        position: relative;
+        overflow: hidden;
+        border-radius: var(--ha-card-border-radius, 16px);
+        background: var(--ha-card-background, var(--card-background-color, #fff));
+        box-shadow: var(--ha-card-box-shadow, none);
+        padding: 12px;
+        cursor: pointer;
+        user-select: none;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 10px;
+        align-items: stretch;
+        min-height: 92px;
+      }
+      .main {
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        gap: 4px;
+        align-items: start;
+      }
+      .topRow {
+        display:flex;
+        align-items:center;
+        gap:10px;
+      }
+      .iconWrap {
+        width: 42px;
+        height: 42px;
+        border-radius: 999px;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        background: color-mix(in srgb, var(--primary-color) 15%, transparent);
+        flex: 0 0 auto;
+      }
+      ha-icon {
+        width: 22px;
+        height: 22px;
+        color: color-mix(in srgb, var(--primary-color) 75%, var(--primary-text-color));
+      }
+      .name {
+        font-size: 18px;
+        font-weight: 700;
+        line-height: 1.15;
+        overflow:hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .label {
+        font-size: 14px;
+        font-weight: 700;
+        opacity: 0.5;
+        overflow:hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .subs {
+        display: grid;
+        grid-auto-rows: min-content;
+        align-content: center;
+        gap: 10px;
+        padding-left: 6px;
+      }
+      .subBtn {
+        width: 34px;
+        height: 34px;
+        border-radius: 999px;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        background: color-mix(in srgb, var(--secondary-text-color) 12%, transparent);
+      }
+      .subBtn ha-icon {
+        width: 18px;
+        height: 18px;
+        color: var(--secondary-text-color);
+      }
+      .subBtn.on {
+        background: color-mix(in srgb, var(--primary-color) 18%, transparent);
+      }
+      .unavailableDot {
+        position:absolute;
+        width: 18px;
+        height: 18px;
+        border-radius: 999px;
+        right: 10px;
+        top: 10px;
+        background: var(--error-color, #db4437);
+        border: 2px solid var(--ha-card-background, var(--card-background-color, #fff));
+      }
+    `;
+    this.shadowRoot.appendChild(style);
   }
 
   _render() {
-    if (!this.shadowRoot || !this._config) return;
+    if (!this._root || !this._hass || !this._config) return;
 
-    const cfg = this._config;
     const hass = this._hass;
+    const cfg = this._config;
 
-    const roomSt = cfg.room_entity ? hass?.states?.[cfg.room_entity] : null;
+    const stateObj = getEntityState(hass, cfg.entity);
+    const name = cfg.name || friendlyName(stateObj, cfg.entity);
+    const icon = entityIcon(stateObj, cfg.icon);
 
-    const roomIcon = roomIconForState(roomSt, cfg);
-    const roomName = cfg.title || (cfg.room_entity ? prettyName(roomSt, cfg.room_entity) : "Room");
+    const label = computeLabel({
+      hass,
+      stateObj,
+      labelUseTemp: !!cfg.label_use_temperature,
+      labelUseBri: !!cfg.label_use_brightness,
+    });
 
-    const widgets = (cfg.widgets || [])
-      .filter((w) => w?.entity)
-      .slice(0, 4)
-      .map((w) => {
-        const st = hass?.states?.[w.entity];
-        const bg = widgetBgForState(st, w, cfg);
-        const icon = widgetIconForState(st, w);
-        const label = w.name || prettyName(st, w.entity);
+    const unavailable = stateObj?.state === "unavailable";
 
-        // Make it keyboard accessible + click like button-card
-        return `
-          <div class="wbtn" role="button" tabindex="0" data-entity="${esc(w.entity)}"
-               style="background:${esc(bg)}; background-color:${esc(bg)};">
-            <ha-icon class="wicon" icon="${esc(icon)}"></ha-icon>
-            <div class="sr">${esc(label)}</div>
-          </div>
-        `;
-      })
-      .join("");
+    const subs = clampSubEntities(cfg.sub_entities, 4).map((s) => {
+      const so = getEntityState(hass, s.entity);
+      const subIcon = s.icon || entityIcon(so, "mdi:flash");
+      const isOn = so?.state === "on";
+      const colorOn = s.color_on || "var(--primary-color)";
+      const colorOff = s.color_off || "var(--secondary-text-color)";
 
-    // If fewer than 4 widgets, keep layout stable (optional)
-    const missing = Math.max(0, 4 - (cfg.widgets || []).filter((w) => w?.entity).slice(0, 4).length);
-    const placeholders = Array.from({ length: missing })
-      .map(() => `<div class="wbtn ph" aria-hidden="true"></div>`)
-      .join("");
+      const tap = s.tap_action || DEFAULT_ACTION;
+      const hold = s.hold_action;
+      const dbl = s.double_tap_action;
 
-    this.shadowRoot.innerHTML = `
+      return { ...s, so, subIcon, isOn, colorOn, colorOff, tap, hold, dbl };
+    });
+
+    // Build HTML
+    this._root.innerHTML = `
       <ha-card class="card">
-        <div class="root" role="button" tabindex="0" data-entity="${esc(cfg.room_entity || "")}">
-          <div class="title">${esc(roomName)}</div>
-
-          <div class="content">
-            <div class="big">
-              <div class="bigCircle">
-                <ha-icon class="bigIcon" icon="${esc(roomIcon)}"></ha-icon>
-              </div>
+        ${unavailable ? `<div class="unavailableDot" title="unavailable"></div>` : ""}
+        <div class="grid">
+          <div class="main" id="main">
+            <div class="topRow">
+              <div class="iconWrap"><ha-icon icon="${icon}"></ha-icon></div>
+              <div class="name" title="${this._escape(name)}">${this._escape(name)}</div>
             </div>
-
-            <div class="widgets">
-              ${widgets}${placeholders}
-            </div>
+            <div></div>
+            <div class="label" title="${this._escape(label)}">${this._escape(label)}</div>
+          </div>
+          <div class="subs">
+            ${subs
+              .map((s, idx) => {
+                const cls = `subBtn ${s.isOn ? "on" : ""}`;
+                const color = s.isOn ? s.colorOn : s.colorOff;
+                return `
+                  <div class="${cls}" id="sub-${idx}" title="${this._escape(s.entity || "")}">
+                    <ha-icon icon="${s.subIcon}" style="color:${color}"></ha-icon>
+                  </div>
+                `;
+              })
+              .join("")}
           </div>
         </div>
       </ha-card>
-
-      <style>
-        :host { display:block; }
-
-        ha-card.card {
-          background: ${esc(cfg.bg)} !important;
-          background-color: ${esc(cfg.bg)} !important;
-          color: ${esc(cfg.accent)};
-          border-radius: 18px;
-          overflow: hidden;
-          --mdc-ripple-color: ${esc(cfg.accent)};
-          --mdc-ripple-press-opacity: ${esc(cfg.ripple_opacity)};
-        }
-
-        .root {
-          padding: 14px 14px 12px 14px;
-          cursor: pointer;
-          user-select: none;
-          outline: none;
-        }
-        .root:focus { box-shadow: 0 0 0 2px rgba(0,0,0,0.12); border-radius: 18px; }
-
-        .title {
-          font-weight: 700;
-          font-size: 20px;
-          line-height: 1.1;
-          margin-bottom: 10px;
-        }
-
-        .content {
-          display: flex;
-          align-items: stretch;
-          justify-content: space-between;
-          gap: 12px;
-        }
-
-        .big {
-          flex: 1;
-          min-width: 0;
-          display: flex;
-          align-items: flex-end;
-        }
-
-        .bigCircle {
-          width: 128px;
-          height: 128px;
-          border-radius: 999px;
-          background: ${esc(cfg.icon_bg)} !important;
-          background-color: ${esc(cfg.icon_bg)} !important;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-        }
-
-        .bigIcon {
-          width: 64px;
-          height: 64px;
-          color: ${esc(cfg.accent)} !important;
-        }
-
-        .widgets {
-          width: 64px;
-          display: flex;
-          flex-direction: column;
-          gap: 12px;
-          align-items: flex-end;
-          justify-content: center;
-        }
-
-        .wbtn {
-          width: 52px;
-          height: 52px;
-          border-radius: 999px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          cursor: pointer;
-          outline: none;
-        }
-        .wbtn:hover { filter: brightness(0.98); }
-        .wbtn:active { transform: scale(0.98); }
-        .wbtn:focus { box-shadow: 0 0 0 2px rgba(0,0,0,0.12); }
-
-        .wicon {
-          width: 26px;
-          height: 26px;
-          color: ${esc(cfg.accent)} !important;
-        }
-
-        .wbtn.ph {
-          background: transparent !important;
-          background-color: transparent !important;
-          border: 1px dashed rgba(0,0,0,0.15);
-          opacity: 0.35;
-          cursor: default;
-        }
-
-        .sr {
-          position: absolute;
-          width: 1px;
-          height: 1px;
-          padding: 0;
-          margin: -1px;
-          overflow: hidden;
-          clip: rect(0, 0, 0, 0);
-          white-space: nowrap;
-          border: 0;
-        }
-      </style>
     `;
 
-    // Card tap -> more-info for room_entity
-    const root = this.shadowRoot.querySelector(".root");
-    const rootEnt = root?.getAttribute("data-entity") || "";
-    if (root && rootEnt) {
-      root.addEventListener("click", () => this._fireMoreInfo(rootEnt));
-      root.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          this._fireMoreInfo(rootEnt);
-        }
-      });
-    }
+    // Main actions
+    const mainEl = this.shadowRoot.getElementById("main");
+    mainEl.onclick = () => handleAction(this, hass, cfg.entity, cfg.tap_action || DEFAULT_ACTION);
 
-    // Widget taps -> more-info for that widget entity
-    this.shadowRoot.querySelectorAll(".wbtn[data-entity]").forEach((el) => {
-      const ent = el.getAttribute("data-entity");
-      if (!ent) return;
+    // Sub actions
+    subs.forEach((s, idx) => {
+      const el = this.shadowRoot.getElementById(`sub-${idx}`);
+      if (!el) return;
 
-      el.addEventListener("click", (e) => {
+      el.onclick = (e) => {
         e.stopPropagation();
-        this._fireMoreInfo(ent);
-      });
+        handleAction(this, hass, s.entity, s.tap);
+      };
 
-      el.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
+      // Optional: hold/double-tap
+      let holdTimer = null;
+      if (!isActionEmpty(s.hold)) {
+        el.onpointerdown = (e) => {
           e.stopPropagation();
-          this._fireMoreInfo(ent);
-        }
-      });
+          holdTimer = window.setTimeout(() => {
+            handleAction(this, hass, s.entity, s.hold);
+            holdTimer = null;
+          }, 500);
+        };
+        el.onpointerup = (e) => {
+          e.stopPropagation();
+          if (holdTimer) window.clearTimeout(holdTimer);
+          holdTimer = null;
+        };
+        el.onpointerleave = () => {
+          if (holdTimer) window.clearTimeout(holdTimer);
+          holdTimer = null;
+        };
+      }
+      if (!isActionEmpty(s.dbl)) {
+        el.ondblclick = (e) => {
+          e.stopPropagation();
+          handleAction(this, hass, s.entity, s.dbl);
+        };
+      }
     });
   }
 
-  static getConfigElement() {
-    return document.createElement(EDITOR_TAG);
-  }
-
-  static getStubConfig() {
-    return {
-      type: "custom:room-card",
-      title: "Kitchen",
-      room_entity: "light.kitchen",
-      bg: "#FFE7C6",
-      accent: "#7E4400",
-      icon_bg: "#EEC690",
-      widget_bg: "rgba(0,0,0,0.08)",
-      widgets: [
-        { entity: "light.kitchen", icon_on: "mdi:lightbulb", icon_off: "mdi:lightbulb-outline", bg_on: "#FFF3D9" },
-        { entity: "switch.kitchen_socket", icon_on: "mdi:power-plug", icon_off: "mdi:power-plug-off", bg_on: "#E7F6EA" },
-        { entity: "sensor.kitchen_temperature", icon: "mdi:thermometer", bg: "#F7D6D9" },
-      ],
-    };
+  _escape(str) {
+    return String(str ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
   }
 }
 
-if (!customElements.get(CARD_TAG)) {
-  customElements.define(CARD_TAG, RoomCard);
-}
+customElements.define("room-card", RoomCard);
 
+// For Lovelace to find it as "custom:room-card"
 window.customCards = window.customCards || [];
 window.customCards.push({
-  type: CARD_TYPE,
+  type: "room-card",
   name: "Room Card",
-  description: "Room tile: big icon + up to 4 circular widgets (button-card-like styling)",
+  description: "A room tile with up to 4 sub-icons (inspired by ULM card_room).",
 });
-
-console.info(
-  "%cROOM-CARD%c loaded (room-tile style)",
-  "color:white;background:#03a9f4;padding:2px 6px;",
-  "color:#03a9f4"
-);
