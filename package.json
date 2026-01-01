@@ -1,10 +1,12 @@
 {
   "name": "room-card",
+  "version": "1.0.0",
   "private": true,
-  "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "build": "vite build"
+    "build": "vite build",
+    "dev": "vite",
+    "lint": "node -e \"console.log('lint placeholder')\""
   },
   "devDependencies": {
     "vite": "^5.0.0"
