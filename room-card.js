@@ -37,10 +37,6 @@ function clampSubEntities(arr, max = 4) {
   return arr.slice(0, max);
 }
 
-// Try to match the label logic from the YAML template:
-// - if label_use_temperature: use current_temperature OR temperature OR device_temperature OR entity state + unit
-// - else if label_use_brightness and entity on and brightness exists: show brightness %
-// - else show translated state (here: state string)
 function computeLabel({ hass, stateObj, labelUseTemp, labelUseBri }) {
   if (!stateObj) return "-";
   const attrs = stateObj.attributes || {};
@@ -53,7 +49,6 @@ function computeLabel({ hass, stateObj, labelUseTemp, labelUseBri }) {
       stateObj.state ??
       "-";
     const uom = attrs.unit_of_measurement || "°C";
-    // If v already includes units, don't double it — keep simple:
     return `${v}${typeof v === "number" ? uom : uom}`;
   }
 
@@ -99,10 +94,6 @@ async function handleAction(el, hass, entityId, actionConfig) {
     if (!st) return;
 
     const domain = entityId.split(".")[0];
-    // Common toggle services:
-    // - light/switch/input_boolean: toggle
-    // - cover: toggle (exists for some), otherwise stop/open/close (we won't guess)
-    // - script: turn_on
     let service = "toggle";
     if (domain === "script" || domain === "scene") service = "turn_on";
 
@@ -116,15 +107,11 @@ async function handleAction(el, hass, entityId, actionConfig) {
     const [domain, service] = s.split(".");
     const data = { ...(a.service_data || a.data || {}) };
 
-    // Convenience: if user didn't specify target entity, use entityId
     if (entityId && data.entity_id === undefined) data.entity_id = entityId;
 
     await hass.callService(domain, service, data);
     return;
   }
-
-  // Home Assistant has newer "perform-action" style in some contexts,
-  // but Lovelace custom cards typically use call-service / toggle / navigate.
 }
 
 class RoomCard extends HTMLElement {
@@ -200,39 +187,18 @@ class RoomCard extends HTMLElement {
         grid-template-columns: 1fr auto;
         gap: 10px;
         align-items: stretch;
-        min-height: 92px;
+        min-height: 130px; /* чуть выше, чтобы как на скрине было больше воздуха */
       }
 
       .main {
         position: relative;
         display: grid;
-        grid-template-rows: auto 1fr auto;
-        gap: 4px;
+        grid-template-rows: auto auto 1fr;
+        gap: 2px;
         align-items: start;
 
-        /* leave room so bottom-left icon doesn't overlap label */
-        padding-left: 2px;
-        padding-bottom: 52px;
-      }
-
-      /* Bottom-left room icon */
-      .roomIconWrap {
-        position: absolute;
-        left: 0;
-        bottom: 0;
-        width: 52px;
-        height: 52px;
-        border-radius: 999px;
-        display:flex;
-        align-items:center;
-        justify-content:center;
-        background: color-mix(in srgb, var(--primary-color) 15%, transparent);
-      }
-
-      .roomIconWrap ha-icon {
-        width: 30px;
-        height: 30px;
-        color: color-mix(in srgb, var(--primary-color) 75%, var(--primary-text-color));
+        /* место под большой круг снизу-слева */
+        padding-bottom: 86px;
       }
 
       .name {
@@ -242,15 +208,46 @@ class RoomCard extends HTMLElement {
         overflow:hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+        z-index: 2;
       }
 
       .label {
         font-size: 14px;
         font-weight: 700;
-        opacity: 0.5;
+        opacity: 0.55;
         overflow:hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+        z-index: 2;
+      }
+
+      /* Большой круг как на скриншоте */
+      .roomBubble {
+        position: absolute;
+        left: -52px;     /* “вылазит” за край */
+        bottom: -56px;   /* “вылазит” за край */
+        width: 200px;    /* размер фона-круга */
+        height: 200px;
+        border-radius: 999px;
+
+        /* мягкая заливка в стиле скрина */
+        background: color-mix(in srgb, var(--primary-color) 18%, transparent);
+
+        display: flex;
+        align-items: center;
+        justify-content: center;
+
+        /* чтобы клики проходили на main/card */
+        pointer-events: none;
+
+        z-index: 1;
+      }
+
+      /* Большая иконка внутри круга */
+      .roomBubble ha-icon {
+        width: 64px;
+        height: 64px;
+        color: color-mix(in srgb, var(--primary-color) 80%, var(--primary-text-color));
       }
 
       .subs {
@@ -328,17 +325,16 @@ class RoomCard extends HTMLElement {
       return { ...s, so, subIcon, isOn, colorOn, colorOff, tap, hold, dbl };
     });
 
-    // Build HTML
     this._root.innerHTML = `
       <ha-card class="card">
         ${unavailable ? `<div class="unavailableDot" title="unavailable"></div>` : ""}
         <div class="grid">
           <div class="main" id="main">
             <div class="name" title="${this._escape(name)}">${this._escape(name)}</div>
-            <div></div>
             <div class="label" title="${this._escape(label)}">${this._escape(label)}</div>
+            <div></div>
 
-            <div class="roomIconWrap" aria-hidden="true">
+            <div class="roomBubble" aria-hidden="true">
               <ha-icon icon="${icon}"></ha-icon>
             </div>
           </div>
@@ -360,12 +356,10 @@ class RoomCard extends HTMLElement {
       </ha-card>
     `;
 
-    // Main actions
     const mainEl = this.shadowRoot.getElementById("main");
     mainEl.onclick = () =>
       handleAction(this, hass, cfg.entity, cfg.tap_action || DEFAULT_ACTION);
 
-    // Sub actions
     subs.forEach((s, idx) => {
       const el = this.shadowRoot.getElementById(`sub-${idx}`);
       if (!el) return;
@@ -375,7 +369,6 @@ class RoomCard extends HTMLElement {
         handleAction(this, hass, s.entity, s.tap);
       };
 
-      // Optional: hold/double-tap
       let holdTimer = null;
       if (!isActionEmpty(s.hold)) {
         el.onpointerdown = (e) => {
@@ -416,7 +409,6 @@ class RoomCard extends HTMLElement {
 
 customElements.define("room-card", RoomCard);
 
-// For Lovelace to find it as "custom:room-card"
 window.customCards = window.customCards || [];
 window.customCards.push({
   type: "room-card",
