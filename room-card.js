@@ -56,6 +56,122 @@ function formatSecondary(stateObj, mode) {
 }
 
 /* ===================== */
+/* ====== EDITOR ======= */
+/* ===================== */
+
+class RoomCardEditor extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" });
+    this._hass = null;
+    this._config = null;
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+  }
+
+  setConfig(config) {
+    this._config = {
+      title: config.title ?? "",
+      entities: Array.isArray(config.entities) ? config.entities : [],
+      show_icon: config.show_icon ?? true,
+      show_state_badge: config.show_state_badge ?? true,
+      secondary_info: config.secondary_info ?? "last_changed",
+      state_colors: config.state_colors ?? null
+    };
+    this._render();
+  }
+
+  _emit() {
+    // всегда отправляем валидный конфиг
+    const out = {
+      type: "custom:room-card",
+      title: this._config.title,
+      entities: this._config.entities,
+      show_icon: this._config.show_icon,
+      show_state_badge: this._config.show_state_badge,
+      secondary_info: this._config.secondary_info
+    };
+    if (this._config.state_colors) out.state_colors = this._config.state_colors;
+
+    this.dispatchEvent(
+      new CustomEvent("config-changed", {
+        bubbles: true,
+        composed: true,
+        detail: { config: out }
+      })
+    );
+  }
+
+  _render() {
+    if (!this._config || !this.shadowRoot) return;
+    const c = this._config;
+
+    this.shadowRoot.innerHTML = `
+      <div class="wrap">
+        <label>Title
+          <input value="${esc(c.title)}" id="title">
+        </label>
+
+        <label>Entities (one per line)
+          <textarea id="entities" rows="6">${esc((c.entities || []).join("\n"))}</textarea>
+        </label>
+
+        <label><input type="checkbox" id="icon" ${c.show_icon ? "checked" : ""}> Show icon</label>
+        <label><input type="checkbox" id="badge" ${c.show_state_badge ? "checked" : ""}> Show badge</label>
+
+        <label>Secondary info
+          <select id="secondary">
+            <option value="none">None</option>
+            <option value="last_changed">Last changed</option>
+            <option value="last_updated">Last updated</option>
+          </select>
+        </label>
+      </div>
+
+      <style>
+        .wrap { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+        textarea, input, select { width: 100%; box-sizing: border-box; }
+        textarea { resize: vertical; }
+      </style>
+    `;
+
+    const titleEl = this.shadowRoot.querySelector("#title");
+    const entitiesEl = this.shadowRoot.querySelector("#entities");
+    const iconEl = this.shadowRoot.querySelector("#icon");
+    const badgeEl = this.shadowRoot.querySelector("#badge");
+    const secondaryEl = this.shadowRoot.querySelector("#secondary");
+
+    secondaryEl.value = c.secondary_info;
+
+    const apply = () => {
+      this._config.title = titleEl.value;
+      this._config.entities = entitiesEl.value
+        .split("\n")
+        .map((e) => e.trim())
+        .filter(Boolean);
+      this._config.show_icon = iconEl.checked;
+      this._config.show_state_badge = badgeEl.checked;
+      this._config.secondary_info = secondaryEl.value;
+      this._emit();
+    };
+
+    // input для текста, change для select/checkbox — стабильнее
+    titleEl.addEventListener("input", apply);
+    entitiesEl.addEventListener("input", apply);
+    iconEl.addEventListener("change", apply);
+    badgeEl.addEventListener("change", apply);
+    secondaryEl.addEventListener("change", apply);
+  }
+}
+
+// Регистрируем editor ПЕРЕД card
+if (!customElements.get(EDITOR_TAG)) {
+  customElements.define(EDITOR_TAG, RoomCardEditor);
+}
+
+/* ===================== */
 /* ====== CARD ========= */
 /* ===================== */
 
@@ -111,26 +227,33 @@ class RoomCard extends HTMLElement {
     const cfg = this._config;
     const hass = this._hass;
 
-    const rows = cfg.entities.map((entityId) => {
-      const st = hass?.states?.[entityId];
-      const badge = cfg.show_state_badge
-        ? `<span class="badge" style="background:${badgeColor(st, cfg)}"></span>`
-        : "";
+    const rows = cfg.entities
+      .map((entityId) => {
+        const st = hass?.states?.[entityId];
+        const badge = cfg.show_state_badge
+          ? `<span class="badge" style="background:${badgeColor(st, cfg)}"></span>`
+          : "";
 
-      return `
-        <div class="row" tabindex="0" data-entity="${esc(entityId)}">
-          ${badge}
-          ${cfg.show_icon ? `<ha-icon class="icon" icon="${esc(st?.attributes?.icon ?? "mdi:home")}"></ha-icon>` : ""}
-          <div class="main">
-            <div class="name">${esc(prettyName(st, entityId))}</div>
-            ${cfg.secondary_info !== "none"
-              ? `<div class="secondary">${esc(formatSecondary(st, cfg.secondary_info))}</div>`
-              : ""}
+        const iconHtml = cfg.show_icon
+          ? `<ha-icon class="icon" icon="${esc(st?.attributes?.icon ?? "mdi:home")}"></ha-icon>`
+          : "";
+
+        const secondary =
+          cfg.secondary_info !== "none" ? esc(formatSecondary(st, cfg.secondary_info)) : "";
+
+        return `
+          <div class="row" role="button" tabindex="0" data-entity="${esc(entityId)}">
+            ${badge}
+            ${iconHtml}
+            <div class="main">
+              <div class="name">${esc(prettyName(st, entityId))}</div>
+              ${secondary ? `<div class="secondary">${secondary}</div>` : ""}
+            </div>
+            <div class="state">${esc(st?.state ?? "unknown")}${esc(unit(st))}</div>
           </div>
-          <div class="state">${esc(st?.state ?? "unknown")}${esc(unit(st))}</div>
-        </div>
-      `;
-    }).join("");
+        `;
+      })
+      .join("");
 
     this.shadowRoot.innerHTML = `
       <ha-card header="${esc(cfg.title)}">
@@ -138,6 +261,7 @@ class RoomCard extends HTMLElement {
       </ha-card>
 
       <style>
+        :host { display:block; }
         .wrap { padding: 8px; }
         .row {
           display: flex;
@@ -146,26 +270,37 @@ class RoomCard extends HTMLElement {
           padding: 10px;
           border-radius: 12px;
           cursor: pointer;
+          user-select: none;
         }
         .row:hover { background: rgba(0,0,0,0.05); }
-        .badge {
-          width: 10px; height: 10px; border-radius: 50%;
-        }
+        .row:focus { outline:none; box-shadow: 0 0 0 2px rgba(25,118,210,0.25); }
+
+        .badge { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 10px; }
         .icon { width: 24px; height: 24px; }
         .main { flex: 1; min-width: 0; }
         .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .secondary { font-size: 12px; opacity: 0.7; }
+        .secondary { font-size: 12px; opacity: 0.7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .state { font-weight: 600; }
       </style>
     `;
 
+    // Click + keyboard support
     this.shadowRoot.querySelectorAll(".row").forEach((el) => {
-      el.addEventListener("click", () => this._fireMoreInfo(el.dataset.entity));
+      const entityId = el.getAttribute("data-entity");
+      if (!entityId) return;
+
+      el.addEventListener("click", () => this._fireMoreInfo(entityId));
+      el.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          this._fireMoreInfo(entityId);
+        }
+      });
     });
   }
 
-  /* ⬇️ ВАЖНО: editor теперь встроен */
   static getConfigElement() {
+    // editor уже зарегистрирован выше
     return document.createElement(EDITOR_TAG);
   }
 
@@ -181,91 +316,9 @@ class RoomCard extends HTMLElement {
   }
 }
 
-customElements.define(CARD_TAG, RoomCard);
-
-/* ===================== */
-/* ====== EDITOR ======= */
-/* ===================== */
-
-class RoomCardEditor extends HTMLElement {
-  constructor() {
-    super();
-    this.attachShadow({ mode: "open" });
-  }
-
-  setConfig(config) {
-    this._config = {
-      title: config.title ?? "",
-      entities: config.entities ?? [],
-      show_icon: config.show_icon ?? true,
-      show_state_badge: config.show_state_badge ?? true,
-      secondary_info: config.secondary_info ?? "last_changed"
-    };
-    this._render();
-  }
-
-  _emit() {
-    this.dispatchEvent(
-      new CustomEvent("config-changed", {
-        bubbles: true,
-        composed: true,
-        detail: {
-          config: {
-            type: "custom:room-card",
-            ...this._config
-          }
-        }
-      })
-    );
-  }
-
-  _render() {
-    const c = this._config;
-    this.shadowRoot.innerHTML = `
-      <div class="wrap">
-        <label>Title
-          <input value="${esc(c.title)}" id="title">
-        </label>
-
-        <label>Entities (one per line)
-          <textarea id="entities">${c.entities.join("\n")}</textarea>
-        </label>
-
-        <label><input type="checkbox" id="icon" ${c.show_icon ? "checked" : ""}> Show icon</label>
-        <label><input type="checkbox" id="badge" ${c.show_state_badge ? "checked" : ""}> Show badge</label>
-
-        <label>Secondary info
-          <select id="secondary">
-            <option value="none">None</option>
-            <option value="last_changed">Last changed</option>
-            <option value="last_updated">Last updated</option>
-          </select>
-        </label>
-      </div>
-
-      <style>
-        .wrap { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
-        textarea, input, select { width: 100%; }
-      </style>
-    `;
-
-    this.shadowRoot.querySelector("#secondary").value = c.secondary_info;
-
-    this.shadowRoot.querySelectorAll("input, textarea, select").forEach((el) => {
-      el.addEventListener("input", () => {
-        this._config.title = this.shadowRoot.querySelector("#title").value;
-        this._config.entities = this.shadowRoot.querySelector("#entities").value
-          .split("\n").map(e => e.trim()).filter(Boolean);
-        this._config.show_icon = this.shadowRoot.querySelector("#icon").checked;
-        this._config.show_state_badge = this.shadowRoot.querySelector("#badge").checked;
-        this._config.secondary_info = this.shadowRoot.querySelector("#secondary").value;
-        this._emit();
-      });
-    });
-  }
+if (!customElements.get(CARD_TAG)) {
+  customElements.define(CARD_TAG, RoomCard);
 }
-
-customElements.define(EDITOR_TAG, RoomCardEditor);
 
 /* ===================== */
 /* === HA metadata ===== */
@@ -278,4 +331,8 @@ window.customCards.push({
   description: "Список сущностей одним блоком (комната)"
 });
 
-console.info("%cROOM-CARD%c loaded (single-file)", "color:white;background:#03a9f4;padding:2px 6px;", "color:#03a9f4");
+console.info(
+  "%cROOM-CARD%c loaded (single-file)",
+  "color:white;background:#03a9f4;padding:2px 6px;",
+  "color:#03a9f4"
+);
