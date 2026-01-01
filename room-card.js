@@ -196,10 +196,10 @@ class RoomCard extends HTMLElement {
         grid-template-rows: auto auto 1fr;
         gap: 2px;
         align-items: start;
-
-        /* место под большой круг снизу-слева */
-        padding-bottom: 86px;
+      
+        padding-bottom: 64px; /* было 86px */
       }
+
 
       .name {
         font-size: 18px;
@@ -221,33 +221,33 @@ class RoomCard extends HTMLElement {
         z-index: 2;
       }
 
-      /* Большой круг как на скриншоте */
       .roomBubble {
         position: absolute;
-        left: -52px;     /* “вылазит” за край */
-        bottom: -56px;   /* “вылазит” за край */
-        width: 200px;    /* размер фона-круга */
-        height: 200px;
+        left: -38px;
+        bottom: -42px;
+      
+        width: 140px;   /* было 200px */
+        height: 140px;
+      
         border-radius: 999px;
-
-        /* мягкая заливка в стиле скрина */
         background: color-mix(in srgb, var(--primary-color) 18%, transparent);
-
+      
         display: flex;
         align-items: center;
         justify-content: center;
-
-        /* чтобы клики проходили на main/card */
+      
         pointer-events: none;
-
         z-index: 1;
       }
 
-      /* Большая иконка внутри круга */
       .roomBubble ha-icon {
-        width: 64px;
-        height: 64px;
-        color: color-mix(in srgb, var(--primary-color) 80%, var(--primary-text-color));
+        width: 96px;    /* было 64px */
+        height: 96px;
+        color: color-mix(
+          in srgb,
+          var(--primary-color) 85%,
+          var(--primary-text-color)
+        );
       }
 
       .subs {
