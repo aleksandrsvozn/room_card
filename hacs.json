@@ -1,5 +1,6 @@
 {
   "name": "Room Card",
+  "filename": "room-card.js",
   "content_in_root": false,
   "render_readme": true
 }
