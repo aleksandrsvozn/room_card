@@ -137,8 +137,18 @@ class RoomCard extends HTMLElement {
       label_use_temperature: true,
       label_use_brightness: false,
       sub_entities: [
-        { entity: "light.living_room", icon: "mdi:lightbulb", tap_action: { action: "toggle" }, color_on: "var(--warning-color)" },
-        { entity: "binary_sensor.motion", icon: "mdi:motion-sensor", tap_action: { action: "more-info" }, color_on: "var(--info-color)" },
+        {
+          entity: "light.living_room",
+          icon: "mdi:lightbulb",
+          tap_action: { action: "toggle" },
+          color_on: "var(--warning-color)",
+        },
+        {
+          entity: "binary_sensor.motion",
+          icon: "mdi:motion-sensor",
+          tap_action: { action: "more-info" },
+          color_on: "var(--info-color)",
+        },
       ],
     };
   }
@@ -173,6 +183,7 @@ class RoomCard extends HTMLElement {
     const style = document.createElement("style");
     style.textContent = `
       :host { display:block; }
+
       .card {
         position: relative;
         overflow: hidden;
@@ -183,6 +194,7 @@ class RoomCard extends HTMLElement {
         cursor: pointer;
         user-select: none;
       }
+
       .grid {
         display: grid;
         grid-template-columns: 1fr auto;
@@ -190,32 +202,39 @@ class RoomCard extends HTMLElement {
         align-items: stretch;
         min-height: 92px;
       }
+
       .main {
+        position: relative;
         display: grid;
         grid-template-rows: auto 1fr auto;
         gap: 4px;
         align-items: start;
+
+        /* leave room so bottom-left icon doesn't overlap label */
+        padding-left: 2px;
+        padding-bottom: 52px;
       }
-      .topRow {
-        display:flex;
-        align-items:center;
-        gap:10px;
-      }
-      .iconWrap {
-        width: 42px;
-        height: 42px;
+
+      /* Bottom-left room icon */
+      .roomIconWrap {
+        position: absolute;
+        left: 0;
+        bottom: 0;
+        width: 52px;
+        height: 52px;
         border-radius: 999px;
         display:flex;
         align-items:center;
         justify-content:center;
         background: color-mix(in srgb, var(--primary-color) 15%, transparent);
-        flex: 0 0 auto;
       }
-      ha-icon {
-        width: 22px;
-        height: 22px;
+
+      .roomIconWrap ha-icon {
+        width: 30px;
+        height: 30px;
         color: color-mix(in srgb, var(--primary-color) 75%, var(--primary-text-color));
       }
+
       .name {
         font-size: 18px;
         font-weight: 700;
@@ -224,6 +243,7 @@ class RoomCard extends HTMLElement {
         text-overflow: ellipsis;
         white-space: nowrap;
       }
+
       .label {
         font-size: 14px;
         font-weight: 700;
@@ -232,6 +252,7 @@ class RoomCard extends HTMLElement {
         text-overflow: ellipsis;
         white-space: nowrap;
       }
+
       .subs {
         display: grid;
         grid-auto-rows: min-content;
@@ -239,6 +260,7 @@ class RoomCard extends HTMLElement {
         gap: 10px;
         padding-left: 6px;
       }
+
       .subBtn {
         width: 34px;
         height: 34px;
@@ -248,14 +270,17 @@ class RoomCard extends HTMLElement {
         justify-content:center;
         background: color-mix(in srgb, var(--secondary-text-color) 12%, transparent);
       }
+
       .subBtn ha-icon {
         width: 18px;
         height: 18px;
         color: var(--secondary-text-color);
       }
+
       .subBtn.on {
         background: color-mix(in srgb, var(--primary-color) 18%, transparent);
       }
+
       .unavailableDot {
         position:absolute;
         width: 18px;
@@ -309,13 +334,15 @@ class RoomCard extends HTMLElement {
         ${unavailable ? `<div class="unavailableDot" title="unavailable"></div>` : ""}
         <div class="grid">
           <div class="main" id="main">
-            <div class="topRow">
-              <div class="iconWrap"><ha-icon icon="${icon}"></ha-icon></div>
-              <div class="name" title="${this._escape(name)}">${this._escape(name)}</div>
-            </div>
+            <div class="name" title="${this._escape(name)}">${this._escape(name)}</div>
             <div></div>
             <div class="label" title="${this._escape(label)}">${this._escape(label)}</div>
+
+            <div class="roomIconWrap" aria-hidden="true">
+              <ha-icon icon="${icon}"></ha-icon>
+            </div>
           </div>
+
           <div class="subs">
             ${subs
               .map((s, idx) => {
@@ -335,7 +362,8 @@ class RoomCard extends HTMLElement {
 
     // Main actions
     const mainEl = this.shadowRoot.getElementById("main");
-    mainEl.onclick = () => handleAction(this, hass, cfg.entity, cfg.tap_action || DEFAULT_ACTION);
+    mainEl.onclick = () =>
+      handleAction(this, hass, cfg.entity, cfg.tap_action || DEFAULT_ACTION);
 
     // Sub actions
     subs.forEach((s, idx) => {
