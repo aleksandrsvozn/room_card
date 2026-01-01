@@ -1,6 +1,5 @@
 /* room-card.js
  * A lightweight Lovelace custom card inspired by UI Lovelace Minimalist "card_room".
- * This version: large room icon anchored bottom-left.
  * No build tools required.
  */
 
@@ -38,11 +37,11 @@ function clampSubEntities(arr, max = 4) {
   return arr.slice(0, max);
 }
 
-// Label logic:
-// - if label_use_temperature: show a temperature-ish attribute if present, else state + unit
-// - else if label_use_brightness and entity is on and brightness exists: show brightness %
-// - else show the raw state string
-function computeLabel({ stateObj, labelUseTemp, labelUseBri }) {
+// Try to match the label logic from the YAML template:
+// - if label_use_temperature: use current_temperature OR temperature OR device_temperature OR entity state + unit
+// - else if label_use_brightness and entity on and brightness exists: show brightness %
+// - else show translated state (here: state string)
+function computeLabel({ hass, stateObj, labelUseTemp, labelUseBri }) {
   if (!stateObj) return "-";
   const attrs = stateObj.attributes || {};
 
@@ -54,9 +53,8 @@ function computeLabel({ stateObj, labelUseTemp, labelUseBri }) {
       stateObj.state ??
       "-";
     const uom = attrs.unit_of_measurement || "°C";
-    if (typeof v === "number") return `${v}${uom}`;
-    // if non-number, keep it readable (don't double units)
-    return `${v}${uom}`;
+    // If v already includes units, don't double it — keep simple:
+    return `${v}${typeof v === "number" ? uom : uom}`;
   }
 
   if (
@@ -101,6 +99,10 @@ async function handleAction(el, hass, entityId, actionConfig) {
     if (!st) return;
 
     const domain = entityId.split(".")[0];
+    // Common toggle services:
+    // - light/switch/input_boolean: toggle
+    // - cover: toggle (exists for some), otherwise stop/open/close (we won't guess)
+    // - script: turn_on
     let service = "toggle";
     if (domain === "script" || domain === "scene") service = "turn_on";
 
@@ -113,9 +115,16 @@ async function handleAction(el, hass, entityId, actionConfig) {
     if (!s || typeof s !== "string" || !s.includes(".")) return;
     const [domain, service] = s.split(".");
     const data = { ...(a.service_data || a.data || {}) };
+
+    // Convenience: if user didn't specify target entity, use entityId
     if (entityId && data.entity_id === undefined) data.entity_id = entityId;
+
     await hass.callService(domain, service, data);
+    return;
   }
+
+  // Home Assistant has newer "perform-action" style in some contexts,
+  // but Lovelace custom cards typically use call-service / toggle / navigate.
 }
 
 class RoomCard extends HTMLElement {
@@ -127,20 +136,9 @@ class RoomCard extends HTMLElement {
       icon: "mdi:sofa-single",
       label_use_temperature: true,
       label_use_brightness: false,
-      tap_action: { action: "more-info" },
       sub_entities: [
-        {
-          entity: "light.living_room",
-          icon: "mdi:lightbulb",
-          tap_action: { action: "toggle" },
-          color_on: "var(--warning-color)",
-        },
-        {
-          entity: "binary_sensor.motion",
-          icon: "mdi:motion-sensor",
-          tap_action: { action: "more-info" },
-          color_on: "var(--info-color)",
-        },
+        { entity: "light.living_room", icon: "mdi:lightbulb", tap_action: { action: "toggle" }, color_on: "var(--warning-color)" },
+        { entity: "binary_sensor.motion", icon: "mdi:motion-sensor", tap_action: { action: "more-info" }, color_on: "var(--info-color)" },
       ],
     };
   }
@@ -158,7 +156,6 @@ class RoomCard extends HTMLElement {
       label_use_brightness: false,
       ...config,
     };
-
     if (!this._root) {
       this.attachShadow({ mode: "open" });
       this._root = document.createElement("div");
@@ -176,7 +173,6 @@ class RoomCard extends HTMLElement {
     const style = document.createElement("style");
     style.textContent = `
       :host { display:block; }
-
       .card {
         position: relative;
         overflow: hidden;
@@ -187,69 +183,55 @@ class RoomCard extends HTMLElement {
         cursor: pointer;
         user-select: none;
       }
-
       .grid {
         display: grid;
         grid-template-columns: 1fr auto;
         gap: 10px;
         align-items: stretch;
-        min-height: 96px;
+        min-height: 92px;
       }
-
-      /* Left main area: name on top, icon+label on bottom */
       .main {
         display: grid;
         grid-template-rows: auto 1fr auto;
-        gap: 8px;
-        align-items: stretch;
+        gap: 4px;
+        align-items: start;
       }
-
-      .name {
-        font-size: 18px;
-        font-weight: 700;
-        line-height: 1.2;
-        overflow:hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
+      .topRow {
+        display:flex;
+        align-items:center;
+        gap:10px;
       }
-
-      .spacer { height: 1px; }
-
-      .bottomRow {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        min-height: 60px;
-      }
-
-      /* BIG icon bottom-left */
-      .iconWrap.large {
-        width: 56px;
-        height: 56px;
+      .iconWrap {
+        width: 42px;
+        height: 42px;
         border-radius: 999px;
         display:flex;
         align-items:center;
         justify-content:center;
-        background: color-mix(in srgb, var(--primary-color) 18%, transparent);
+        background: color-mix(in srgb, var(--primary-color) 15%, transparent);
         flex: 0 0 auto;
       }
-
-      .iconWrap.large ha-icon {
-        width: 30px;
-        height: 30px;
-        color: var(--primary-color);
+      ha-icon {
+        width: 22px;
+        height: 22px;
+        color: color-mix(in srgb, var(--primary-color) 75%, var(--primary-text-color));
       }
-
-      .label {
-        font-size: 14px;
+      .name {
+        font-size: 18px;
         font-weight: 700;
-        opacity: 0.6;
+        line-height: 1.15;
         overflow:hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
       }
-
-      /* Right side sub-icons (max 4) */
+      .label {
+        font-size: 14px;
+        font-weight: 700;
+        opacity: 0.5;
+        overflow:hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
       .subs {
         display: grid;
         grid-auto-rows: min-content;
@@ -257,7 +239,6 @@ class RoomCard extends HTMLElement {
         gap: 10px;
         padding-left: 6px;
       }
-
       .subBtn {
         width: 34px;
         height: 34px;
@@ -267,17 +248,14 @@ class RoomCard extends HTMLElement {
         justify-content:center;
         background: color-mix(in srgb, var(--secondary-text-color) 12%, transparent);
       }
-
       .subBtn ha-icon {
         width: 18px;
         height: 18px;
         color: var(--secondary-text-color);
       }
-
       .subBtn.on {
         background: color-mix(in srgb, var(--primary-color) 18%, transparent);
       }
-
       .unavailableDot {
         position:absolute;
         width: 18px;
@@ -303,6 +281,7 @@ class RoomCard extends HTMLElement {
     const icon = entityIcon(stateObj, cfg.icon);
 
     const label = computeLabel({
+      hass,
       stateObj,
       labelUseTemp: !!cfg.label_use_temperature,
       labelUseBri: !!cfg.label_use_brightness,
@@ -317,34 +296,26 @@ class RoomCard extends HTMLElement {
       const colorOn = s.color_on || "var(--primary-color)";
       const colorOff = s.color_off || "var(--secondary-text-color)";
 
-      return {
-        ...s,
-        so,
-        subIcon,
-        isOn,
-        colorOn,
-        colorOff,
-        tap: s.tap_action || DEFAULT_ACTION,
-        hold: s.hold_action,
-        dbl: s.double_tap_action,
-      };
+      const tap = s.tap_action || DEFAULT_ACTION;
+      const hold = s.hold_action;
+      const dbl = s.double_tap_action;
+
+      return { ...s, so, subIcon, isOn, colorOn, colorOff, tap, hold, dbl };
     });
 
+    // Build HTML
     this._root.innerHTML = `
       <ha-card class="card">
         ${unavailable ? `<div class="unavailableDot" title="unavailable"></div>` : ""}
         <div class="grid">
           <div class="main" id="main">
-            <div class="name" title="${this._escape(name)}">${this._escape(name)}</div>
-            <div class="spacer"></div>
-            <div class="bottomRow">
-              <div class="iconWrap large" id="room-icon">
-                <ha-icon icon="${icon}"></ha-icon>
-              </div>
-              <div class="label" title="${this._escape(label)}">${this._escape(label)}</div>
+            <div class="topRow">
+              <div class="iconWrap"><ha-icon icon="${icon}"></ha-icon></div>
+              <div class="name" title="${this._escape(name)}">${this._escape(name)}</div>
             </div>
+            <div></div>
+            <div class="label" title="${this._escape(label)}">${this._escape(label)}</div>
           </div>
-
           <div class="subs">
             ${subs
               .map((s, idx) => {
@@ -362,23 +333,9 @@ class RoomCard extends HTMLElement {
       </ha-card>
     `;
 
-    // Main card action (tap anywhere in left area)
+    // Main actions
     const mainEl = this.shadowRoot.getElementById("main");
-    mainEl.onclick = () =>
-      handleAction(this, hass, cfg.entity, cfg.tap_action || DEFAULT_ACTION);
-
-    // Optional: if you want icon to have a DIFFERENT action than card,
-    // set cfg.icon_tap_action. Otherwise it uses the same as the card.
-    const iconEl = this.shadowRoot.getElementById("room-icon");
-    iconEl.onclick = (e) => {
-      e.stopPropagation();
-      handleAction(
-        this,
-        hass,
-        cfg.entity,
-        cfg.icon_tap_action || cfg.tap_action || DEFAULT_ACTION
-      );
-    };
+    mainEl.onclick = () => handleAction(this, hass, cfg.entity, cfg.tap_action || DEFAULT_ACTION);
 
     // Sub actions
     subs.forEach((s, idx) => {
@@ -390,7 +347,7 @@ class RoomCard extends HTMLElement {
         handleAction(this, hass, s.entity, s.tap);
       };
 
-      // Hold (optional)
+      // Optional: hold/double-tap
       let holdTimer = null;
       if (!isActionEmpty(s.hold)) {
         el.onpointerdown = (e) => {
@@ -410,8 +367,6 @@ class RoomCard extends HTMLElement {
           holdTimer = null;
         };
       }
-
-      // Double tap (optional)
       if (!isActionEmpty(s.dbl)) {
         el.ondblclick = (e) => {
           e.stopPropagation();
@@ -433,10 +388,10 @@ class RoomCard extends HTMLElement {
 
 customElements.define("room-card", RoomCard);
 
-// Make it discoverable in the Lovelace card picker
+// For Lovelace to find it as "custom:room-card"
 window.customCards = window.customCards || [];
 window.customCards.push({
   type: "room-card",
   name: "Room Card",
-  description: "A room tile with up to 4 sub-icons (large icon bottom-left).",
+  description: "A room tile with up to 4 sub-icons (inspired by ULM card_room).",
 });
